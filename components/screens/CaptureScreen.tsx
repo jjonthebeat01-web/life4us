@@ -68,20 +68,48 @@ export function CaptureScreen({
     }
   }
 
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [stuck, setStuck] = useState(false);
+
+  // Wait for the video element to actually have a decoded frame instead of
+  // bailing immediately — mobile browsers (esp. Safari) can lag a beat behind
+  // getUserMedia resolving, or briefly drop dimensions if the tab was backgrounded.
+  async function waitForVideoReady(video: HTMLVideoElement, timeoutMs = 2000) {
+    const start = Date.now();
+    while (!video.videoWidth || video.readyState < 2) {
+      if (Date.now() - start > timeoutMs) return false;
+      await sleep(100);
+    }
+    return true;
+  }
+
   async function captureAndSubmit() {
-    const video = localVideoRef.current;
     const shotIndex = activeShotRef.current;
-    if (!video || !video.videoWidth) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1); // mirror, since preview is mirrored
-    ctx.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    await store.submitFrame(code, self.id, shotIndex, dataUrl);
+    setCaptureError(null);
+    try {
+      const video = localVideoRef.current;
+      if (!video) throw new Error("camera not attached");
+      const ready = await waitForVideoReady(video);
+      if (!ready) throw new Error("camera not ready");
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas unavailable");
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1); // mirror, since preview is mirrored
+      ctx.drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      await store.submitFrame(code, self.id, shotIndex, dataUrl);
+      setStuck(false);
+    } catch (err) {
+      // Don't fail silently: surface it and let the user retry manually so the
+      // session never freezes waiting on a submission that's never coming.
+      console.error("capture failed", err);
+      setCaptureError("Couldn't capture — tap retry.");
+      setStuck(true);
+    }
   }
 
   useEffect(() => {
@@ -112,7 +140,7 @@ export function CaptureScreen({
   const currentShot = state.shots[state.activeShotIndex];
   const locked = !!currentShot?.lockedAt;
   const mySubmitted = currentShot ? !!currentShot.frames[self.id] : false;
-  const canStart = state.countdownSeed == null && countdownValue == null && !locked;
+  const canStart = state.countdownSeed == null && countdownValue == null && !locked && !stuck;
   const isTwoColumnPreview = state.formatConfirmed === "2x2" || state.formatConfirmed === "2x4";
   const previewContainerClass = isTwoColumnPreview
     ? "grid grid-cols-2 gap-2 w-full mb-4"
@@ -172,8 +200,13 @@ export function CaptureScreen({
       {cameraError && (
         <p className="text-flash-pink text-xs text-center mb-3">{cameraError}</p>
       )}
+      {captureError && (
+        <p className="text-flash-pink text-xs text-center mb-3">{captureError}</p>
+      )}
 
-      {canStart ? (
+      {stuck ? (
+        <Button onClick={() => captureAndSubmit()}>Retry capture</Button>
+      ) : canStart ? (
         <Button onClick={() => store.startCountdown(code, self.id)} disabled={!!cameraError}>
           Start countdown
         </Button>
