@@ -15,8 +15,10 @@ import type { SessionStore } from "./types";
 
 const PARTNER_ID_PREFIX = "photobooth:partner:";
 
-// --- Raw DB row shape. No `frames` here on purpose — photo data never
-// touches Supabase, it travels peer-to-peer over the WebRTC data channel. ---
+// --- Raw DB row shape. No `frames` column here — captured photos live in the
+// "frames" Storage bucket (see framePath/syncMissingFrames below), keyed by
+// code/shotIndex/partnerId. The row only tracks *who* has submitted via
+// shots[].submittedBy so the client knows what to fetch. ---
 interface SessionRow {
   code: string;
   created_at: string;
@@ -47,6 +49,60 @@ function genId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `p_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+}
+
+// --- Frame storage (Supabase Storage bucket "frames") ---
+// The WebRTC data channel is a nice-to-have fast path when it happens to
+// connect, but two real devices on two real networks routinely fail to
+// establish direct P2P (NAT traversal, restrictive networks, no reliable
+// TURN). Storage is the source of truth so a shot is never missing a
+// partner's photo just because the P2P link didn't come up.
+function framePath(code: string, shotIndex: number, partnerId: string) {
+  return `${code}/${shotIndex}-${partnerId}.jpg`;
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Pull down any partner frames this device is missing locally, based on the
+ * current row's `submittedBy` lists. Safe to call repeatedly — skips frames
+ * already cached. */
+async function syncMissingFrames(code: string) {
+  const rt = runtimes.get(code);
+  if (!rt?.row) return;
+  const sb = requireSupabase();
+  const selfId = myPartnerId(code);
+  let changed = false;
+
+  for (const shot of rt.row.shots) {
+    for (const partnerId of shot.submittedBy) {
+      if (partnerId === selfId) continue;
+      if (rt.frameCache[shot.index]?.[partnerId]) continue;
+      try {
+        const { data, error } = await sb.storage.from("frames").download(framePath(code, shot.index, partnerId));
+        if (error || !data) continue;
+        const dataUrl = await blobToDataUrl(data);
+        const rt2 = runtimes.get(code);
+        if (!rt2) return;
+        rt2.frameCache[shot.index] = { ...(rt2.frameCache[shot.index] ?? {}), [partnerId]: dataUrl };
+        changed = true;
+      } catch (err) {
+        console.error("frame fetch failed", err);
+      }
+    }
+  }
+  if (changed) emit(code);
 }
 
 function myPartnerId(code: string): string | null {
@@ -156,6 +212,7 @@ function ensureRuntime(code: string): SessionRuntime {
           rt2.row = payload.new as SessionRow;
         }
         emit(code);
+        void syncMissingFrames(code);
       }
     )
     .subscribe();
@@ -287,6 +344,7 @@ export class SupabaseSessionStore implements SessionStore {
           rt2.presenceChannel.track({ id: myId, label, connectedAt: Date.now() } satisfies PresencePayload);
         }
         emit(code);
+        void syncMissingFrames(code);
       });
 
     // Lobby -> template auto-advance once presence shows two partners, and
@@ -352,10 +410,21 @@ export class SupabaseSessionStore implements SessionStore {
       rt.frameCache[shotIndex] = { ...(rt.frameCache[shotIndex] ?? {}), [partnerId]: dataUrl };
       emit(code); // optimistic — show "you: captured" immediately, don't wait on the network
       if (rt.dataChannel && rt.dataChannel.readyState === "open") {
-        rt.dataChannel.send(JSON.stringify({ shotIndex, partnerId, dataUrl }));
+        rt.dataChannel.send(JSON.stringify({ shotIndex, partnerId, dataUrl })); // fast path when P2P happens to be up
       }
     }
-    await requireSupabase().rpc("submit_frame", { p_code: code, p_partner_id: partnerId, p_shot_index: shotIndex });
+
+    const sb = requireSupabase();
+    // Reliable path: two real devices on two real networks can't be counted on
+    // to hold a direct P2P link, so Storage is the actual source of truth —
+    // this is what lets the *other* partner's device pick up this frame.
+    const blob = await dataUrlToBlob(dataUrl);
+    const { error: uploadError } = await sb.storage
+      .from("frames")
+      .upload(framePath(code, shotIndex, partnerId), blob, { contentType: "image/jpeg", upsert: true });
+    if (uploadError) throw uploadError; // let the caller's retry UI handle it — don't mark the shot submitted if the photo never made it up
+
+    await sb.rpc("submit_frame", { p_code: code, p_partner_id: partnerId, p_shot_index: shotIndex });
   }
 
   async voteRetake(code: string, partnerId: string, shotIndex: number) {
