@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/* Self-hosted fonts (no external font CDN in this environment) */
+@import "@fontsource/fraunces/400.css";
+@import "@fontsource/fraunces/500.css";
+@import "@fontsource/fraunces/600.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@theme {
+  /* --- color: 6 values, per spec --- */
+  --color-paper: #faf6f0;
+  --color-film-black: #1e1b1a;
+  --color-flash-pink: #e8547a;
+  --color-sage: #7c9473;
+  --color-ink: #2b2a28;
+  --color-mist: #a8a29b;
+
+  /* --- type roles --- */
+  --font-display: "Fraunces", serif;
+  --font-body: "Inter", sans-serif;
+  --font-utility: "IBM Plex Mono", monospace;
+
+  /* signature radii for the viewfinder-frame layout concept */
+  --radius-frame: 28px;
+  --radius-cell: 10px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* visible keyboard focus everywhere, per quality floor */
+:focus-visible {
+  outline: 2px solid var(--color-flash-pink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
