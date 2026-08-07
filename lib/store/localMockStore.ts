@@ -295,10 +295,13 @@ export class LocalMockStore implements SessionStore {
       if (picks.length < partnerCount) return s;
       const [first, ...rest] = picks;
       if (!rest.every((p) => p === first)) return s;
+      const joinerId = Object.keys(s.partners).find((id) => id !== s.ownerId);
+      if (!joinerId) return s; // need both partners known to assign slot ownership
       const count = FORMAT_SHOT_COUNT[first];
       const shots: Shot[] = Array.from({ length: count }, (_, i) => ({
         index: i,
-        frames: {},
+        ownerId: i % 2 === 0 ? s.ownerId! : joinerId,
+        photo: null,
         lockedAt: null,
       }));
       return {
@@ -320,20 +323,18 @@ export class LocalMockStore implements SessionStore {
     mutate(code, (s) => {
       const shot = s.shots[shotIndex];
       if (!shot || shot.lockedAt) return s;
-      const frames = { ...shot.frames, [partnerId]: dataUrl };
-      const partnerCount = Object.keys(s.partners).length;
-      const complete = Object.keys(frames).length >= partnerCount;
+      if (shot.ownerId !== partnerId) return s; // only the slot's owner can fill it
       const nextShots = s.shots.map((sh, i) =>
-        i === shotIndex
-          ? { ...sh, frames, lockedAt: complete ? Date.now() : sh.lockedAt }
-          : sh
+        i === shotIndex ? { ...sh, photo: dataUrl, lockedAt: Date.now() } : sh
       );
+      const pairStart = Math.floor(shotIndex / 2) * 2;
+      const roundComplete = [pairStart, pairStart + 1].every((i) => nextShots[i]?.lockedAt);
       const allLocked = nextShots.every((sh) => sh.lockedAt);
       return {
         ...s,
         shots: nextShots,
-        activeShotIndex: complete
-          ? Math.min(shotIndex + 1, nextShots.length - 1)
+        activeShotIndex: roundComplete
+          ? Math.min(Math.floor(shotIndex / 2) + 1, nextShots.length / 2 - 1)
           : s.activeShotIndex,
         countdownSeed: null,
         retakeAdvanceVotes: allLocked ? [] : s.retakeAdvanceVotes,
@@ -346,10 +347,25 @@ export class LocalMockStore implements SessionStore {
     mutate(code, (s) => {
       const existing = s.retakeVotes[shotIndex] ?? [];
       if (existing.includes(partnerId)) return s;
-      return {
-        ...s,
-        retakeVotes: { ...s.retakeVotes, [shotIndex]: [...existing, partnerId] },
-      };
+      const nextVotes = [...existing, partnerId];
+
+      if (nextVotes.length >= 2) {
+        const nextShots = s.shots.map((sh) =>
+          sh.index === shotIndex ? { ...sh, photo: null, lockedAt: null } : sh
+        );
+        const restVotes = { ...s.retakeVotes };
+        delete restVotes[shotIndex];
+        return {
+          ...s,
+          shots: nextShots,
+          retakeVotes: restVotes,
+          retakeAdvanceVotes: [],
+          activeShotIndex: Math.floor(shotIndex / 2),
+          countdownSeed: null,
+          step: "capture",
+        };
+      }
+      return { ...s, retakeVotes: { ...s.retakeVotes, [shotIndex]: nextVotes } };
     });
   }
 
@@ -359,31 +375,11 @@ export class LocalMockStore implements SessionStore {
       const partnerCount = Object.keys(s.partners).length;
       const nextVotes = [...s.retakeAdvanceVotes, partnerId];
       const allAgreed = nextVotes.length >= partnerCount;
+      const allLocked = s.shots.every((sh) => sh.lockedAt);
       return {
         ...s,
         retakeAdvanceVotes: nextVotes,
-        step: allAgreed ? "filter" : s.step,
-      };
-    });
-  }
-
-  async confirmRetake(code: string, partnerId: string, shotIndex: number) {
-    mutate(code, (s) => {
-      if (s.ownerId !== partnerId) return s;
-      const votes = s.retakeVotes[shotIndex] ?? [];
-      if (votes.length < 2) return s;
-      const nextShots = s.shots.map((sh) =>
-        sh.index === shotIndex ? { ...sh, frames: {}, lockedAt: null } : sh
-      );
-      const restVotes = { ...s.retakeVotes };
-      delete restVotes[shotIndex];
-      return {
-        ...s,
-        shots: nextShots,
-        retakeVotes: restVotes,
-        retakeAdvanceVotes: [],
-        activeShotIndex: shotIndex,
-        step: "capture",
+        step: allAgreed && allLocked ? "filter" : s.step,
       };
     });
   }

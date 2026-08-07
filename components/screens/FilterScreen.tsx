@@ -17,10 +17,6 @@ export function FilterScreen({
   const filter = filterById(state.filterId);
   const template = templateById(state.templateConfirmed);
 
-  function frameFor(shot: (typeof state.shots)[number]) {
-    return shot.frames[self.id] ?? Object.values(shot.frames)[0] ?? null;
-  }
-
   return (
     <div className="flex flex-col items-center text-center gap-1 w-full">
       <h1 className="font-display text-2xl text-paper mb-1">Choose a filter</h1>
@@ -30,26 +26,23 @@ export function FilterScreen({
         className="rounded-lg overflow-hidden p-1.5 flex flex-col gap-1 mb-6"
         style={{ backgroundColor: template.stripBase, width: 160 }}
       >
-        {state.shots.map((shot) => {
-          const frame = frameFor(shot);
-          return (
-            <div
-              key={shot.index}
-              className="aspect-[3/2] rounded-sm overflow-hidden"
-              style={{ backgroundColor: template.swatch }}
-            >
-              {frame && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={frame}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  style={{ filter: filter.css }}
-                />
-              )}
-            </div>
-          );
-        })}
+        {state.shots.map((shot) => (
+          <div
+            key={shot.index}
+            className="aspect-[3/2] rounded-sm overflow-hidden"
+            style={{ backgroundColor: template.swatch }}
+          >
+            {shot.photo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={shot.photo}
+                alt=""
+                className="w-full h-full object-cover"
+                style={{ filter: filter.css }}
+              />
+            )}
+          </div>
+        ))}
       </div>
 
       <div className="flex gap-2 overflow-x-auto w-full pb-2 mb-6 justify-center">

@@ -33,17 +33,16 @@ export interface SessionStore {
   /** Either partner fires the synced countdown for the current shot. */
   startCountdown(code: string, partnerId: string): Promise<void>;
 
-  /** Each device submits its own local full-res frame for the active shot. */
+  /** The slot's owner submits their captured photo. No-ops server-side if
+   * called by anyone else, or if the slot is already locked. */
   submitFrame(code: string, partnerId: string, shotIndex: number, dataUrl: string): Promise<void>;
 
-  /** Either partner votes a shot for retake. */
+  /** Either partner votes a slot for retake. Once 2 votes land on the same
+   * slot, the retake auto-triggers — no separate confirm step. */
   voteRetake(code: string, partnerId: string, shotIndex: number): Promise<void>;
 
   /** Either partner votes to move on past the retake step once no more retakes are wanted. */
   voteToAdvance(code: string, partnerId: string): Promise<void>;
-
-  /** Owner confirms a retake once 2 votes are in; loops capture back to that shot. */
-  confirmRetake(code: string, partnerId: string, shotIndex: number): Promise<void>;
 
   /** Either partner can change the filter; live-synced, no vote needed. */
   setFilter(code: string, partnerId: string, filterId: string): Promise<void>;
@@ -55,11 +54,11 @@ export interface SessionStore {
    * Optional — only implemented by stores where photo frames don't already
    * ride along inside the synced state (i.e. the Supabase store). Lets
    * usePeerConnection.ts hand over its WebRTC data channel once it opens, and
-   * feed in frames received from the partner over that channel, without every
-   * screen needing to know this plumbing exists.
+   * feed in a frame received from the partner over that channel, without
+   * every screen needing to know this plumbing exists.
    */
   setDataChannel?(code: string, channel: RTCDataChannel | null): void;
-  receiveRemoteFrame?(code: string, shotIndex: number, partnerId: string, dataUrl: string): void;
+  receiveRemoteFrame?(code: string, shotIndex: number, dataUrl: string): void;
 
   /** Only implemented by the Supabase store — the Broadcast channel used for WebRTC signaling. Loosely typed here to avoid coupling this interface to @supabase/supabase-js. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

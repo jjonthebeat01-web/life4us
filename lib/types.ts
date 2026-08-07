@@ -25,8 +25,12 @@ export interface Partner {
 
 export interface Shot {
   index: number;
-  /** data URLs, keyed by partner id — each device contributes its own local frame */
-  frames: Record<string, string>;
+  /** The single partner who owns and captures this slot. Slots alternate:
+   * even index -> session owner, odd index -> the joiner. */
+  ownerId: string;
+  /** This slot's captured photo as a data URL, once available locally (own
+   * capture, or fetched from Storage once the owner's device uploads it). */
+  photo: string | null;
   lockedAt: number | null;
 }
 
@@ -45,10 +49,12 @@ export interface SessionState {
   formatPicks: Record<string, FormatId>;
   formatConfirmed: FormatId | null;
 
-  // capture
+  // capture — "shots" is really "slots": one per photo in the final strip,
+  // each owned by exactly one partner. A "round" is one pair of slots
+  // (owner's + joiner's), captured together off a single synced countdown.
   shots: Shot[];
   countdownSeed: number | null; // incrementing value broadcasts "start countdown now"
-  activeShotIndex: number;
+  activeShotIndex: number; // the active ROUND index (0-based), not a slot index
 
   // retake
   retakeVotes: Record<number, string[]>; // shotIndex -> partnerIds who voted

@@ -37,10 +37,6 @@ export function CaptureScreen({
   const [countdownValue, setCountdownValue] = useState<number | null>(null);
   const processedSeedRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const activeShotRef = useRef(state.activeShotIndex);
-  useEffect(() => {
-    activeShotRef.current = state.activeShotIndex;
-  }, [state.activeShotIndex]);
 
   useEffect(() => {
     if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
@@ -68,8 +64,21 @@ export function CaptureScreen({
     }
   }
 
+  const round = state.activeShotIndex;
+  const pairStart = round * 2;
+  const mySlot = state.shots.find((sh) => sh.index >= pairStart && sh.index <= pairStart + 1 && sh.ownerId === self.id);
+  const partnerSlot = state.shots.find((sh) => sh.index >= pairStart && sh.index <= pairStart + 1 && sh.ownerId !== self.id);
+  const mySubmitted = !!mySlot?.lockedAt;
+  const partnerSubmitted = !!partnerSlot?.lockedAt;
+  const roundComplete = mySubmitted && partnerSubmitted;
+  const totalRounds = state.shots.length / 2;
+
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [stuck, setStuck] = useState(false);
+  const mySlotRef = useRef(mySlot);
+  useEffect(() => {
+    mySlotRef.current = mySlot;
+  }, [mySlot]);
 
   // Wait for the video element to actually have a decoded frame instead of
   // bailing immediately — mobile browsers (esp. Safari) can lag a beat behind
@@ -84,7 +93,8 @@ export function CaptureScreen({
   }
 
   async function captureAndSubmit() {
-    const shotIndex = activeShotRef.current;
+    const slot = mySlotRef.current;
+    if (!slot || slot.lockedAt) return; // not my slot this round, or I've already captured it — nothing to do
     setCaptureError(null);
     try {
       const video = localVideoRef.current;
@@ -101,7 +111,7 @@ export function CaptureScreen({
       ctx.scale(-1, 1); // mirror, since preview is mirrored
       ctx.drawImage(video, 0, 0);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-      await store.submitFrame(code, self.id, shotIndex, dataUrl);
+      await store.submitFrame(code, self.id, slot.index, dataUrl);
       setStuck(false);
     } catch (err) {
       // Don't fail silently: surface it and let the user retry manually so the
@@ -137,20 +147,21 @@ export function CaptureScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.countdownSeed]);
 
-  const currentShot = state.shots[state.activeShotIndex];
-  const locked = !!currentShot?.lockedAt;
-  const mySubmitted = currentShot ? !!currentShot.frames[self.id] : false;
-  const canStart = state.countdownSeed == null && countdownValue == null && !locked && !stuck;
+  const canStart = state.countdownSeed == null && countdownValue == null && !mySubmitted && !stuck;
   const isTwoColumnPreview = state.formatConfirmed === "2x2" || state.formatConfirmed === "2x4";
   const previewContainerClass = isTwoColumnPreview
     ? "grid grid-cols-2 gap-2 w-full mb-4"
     : "flex flex-col w-full gap-2 mb-4";
 
+  let statusText = "sound synced on both screens";
+  if (roundComplete) statusText = "round captured";
+  else if (mySubmitted) statusText = "waiting for partner's photo";
+
   return (
     <div className="flex flex-col items-center w-full">
       <div className="flex items-center justify-between w-full mb-4">
         <span className="font-utility text-xs text-mist uppercase tracking-wider">
-          shot {state.activeShotIndex + 1} / {state.shots.length}
+          round {round + 1} / {totalRounds}
         </span>
         <div className="flex gap-1">
           {state.shots.map((s, i) => (
@@ -159,7 +170,7 @@ export function CaptureScreen({
               className={`h-1 w-6 rounded-full ${
                 s.lockedAt
                   ? "bg-paper"
-                  : i === state.activeShotIndex
+                  : Math.floor(i / 2) === round
                   ? "bg-flash-pink"
                   : "bg-white/15"
               }`}
@@ -172,7 +183,7 @@ export function CaptureScreen({
         <div className="w-full rounded-xl overflow-hidden bg-black relative aspect-[4/3]">
           <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
           <span className="absolute top-2 left-2 bg-black/50 text-paper text-xs font-utility px-2 py-1 rounded-full">
-            {partner?.label ?? "?"} · {remoteStream ? "live" : connectionState}
+            {partner?.label ?? "?"} · {partnerSubmitted ? "captured" : remoteStream ? "live" : connectionState}
           </span>
         </div>
 
@@ -211,9 +222,7 @@ export function CaptureScreen({
           Start countdown
         </Button>
       ) : (
-        <p className="text-mist text-xs font-utility text-center">
-          {locked ? "shot captured" : "sound synced on both screens"}
-        </p>
+        <p className="text-mist text-xs font-utility text-center">{statusText}</p>
       )}
     </div>
   );

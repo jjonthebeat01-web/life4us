@@ -15,21 +15,22 @@ import type { SessionStore } from "./types";
 
 const PARTNER_ID_PREFIX = "photobooth:partner:";
 
-// --- Raw DB row shape. No `frames` column here — captured photos live in the
-// "frames" Storage bucket (see framePath/syncMissingFrames below), keyed by
-// code/shotIndex/partnerId. The row only tracks *who* has submitted via
-// shots[].submittedBy so the client knows what to fetch. ---
+// --- Raw DB row shape. No `frames`/`photo` column here — captured photos
+// live in the "frames" Storage bucket (see framePath/syncMissingFrames
+// below), one file per slot. The row only tracks slot ownership + lock
+// state so the client knows what to fetch and who's allowed to fill what. ---
 interface SessionRow {
   code: string;
   created_at: string;
   expires_at: string | null;
   owner_id: string | null;
+  joiner_id: string | null;
   step: SessionState["step"];
   template_picks: Record<string, string>;
   template_confirmed: string | null;
   format_picks: Record<string, FormatId>;
   format_confirmed: FormatId | null;
-  shots: { index: number; submittedBy: string[]; lockedAt: number | null }[];
+  shots: { index: number; ownerId: string; lockedAt: number | null }[];
   active_shot_index: number;
   countdown_seed: number | null;
   retake_votes: Record<string, string[]>;
@@ -55,10 +56,11 @@ function genId(): string {
 // The WebRTC data channel is a nice-to-have fast path when it happens to
 // connect, but two real devices on two real networks routinely fail to
 // establish direct P2P (NAT traversal, restrictive networks, no reliable
-// TURN). Storage is the source of truth so a shot is never missing a
-// partner's photo just because the P2P link didn't come up.
-function framePath(code: string, shotIndex: number, partnerId: string) {
-  return `${code}/${shotIndex}-${partnerId}.jpg`;
+// TURN). Storage is the source of truth so a slot's photo is never missing
+// on the non-owning partner's device just because the P2P link didn't come up.
+// One file per slot, since each slot has exactly one owner/photo now.
+function framePath(code: string, slotIndex: number) {
+  return `${code}/slot-${slotIndex}.jpg`;
 }
 
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
@@ -75,31 +77,28 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** Pull down any partner frames this device is missing locally, based on the
- * current row's `submittedBy` lists. Safe to call repeatedly — skips frames
- * already cached. */
+/** Pull down any locked slot's photo this device doesn't have cached yet
+ * (typically the partner's slots, but also covers a reload of your own
+ * device). Safe to call repeatedly — skips slots already cached. */
 async function syncMissingFrames(code: string) {
   const rt = runtimes.get(code);
   if (!rt?.row) return;
   const sb = requireSupabase();
-  const selfId = myPartnerId(code);
   let changed = false;
 
   for (const shot of rt.row.shots) {
-    for (const partnerId of shot.submittedBy) {
-      if (partnerId === selfId) continue;
-      if (rt.frameCache[shot.index]?.[partnerId]) continue;
-      try {
-        const { data, error } = await sb.storage.from("frames").download(framePath(code, shot.index, partnerId));
-        if (error || !data) continue;
-        const dataUrl = await blobToDataUrl(data);
-        const rt2 = runtimes.get(code);
-        if (!rt2) return;
-        rt2.frameCache[shot.index] = { ...(rt2.frameCache[shot.index] ?? {}), [partnerId]: dataUrl };
-        changed = true;
-      } catch (err) {
-        console.error("frame fetch failed", err);
-      }
+    if (!shot.lockedAt) continue;
+    if (rt.frameCache[shot.index]) continue;
+    try {
+      const { data, error } = await sb.storage.from("frames").download(framePath(code, shot.index));
+      if (error || !data) continue;
+      const dataUrl = await blobToDataUrl(data);
+      const rt2 = runtimes.get(code);
+      if (!rt2) return;
+      rt2.frameCache[shot.index] = dataUrl;
+      changed = true;
+    } catch (err) {
+      console.error("frame fetch failed", err);
     }
   }
   if (changed) emit(code);
@@ -126,7 +125,7 @@ interface SessionRuntime {
   presenceChannel: RealtimeChannel;
   rtcChannel: RealtimeChannel; // WebRTC signaling broadcast — used by usePeerConnection.ts
   row: SessionRow | null;
-  frameCache: Record<number, Record<string, string>>; // shotIndex -> partnerId -> dataUrl (never persisted)
+  frameCache: Record<number, string>; // slotIndex -> dataUrl (never persisted)
   dataChannel: RTCDataChannel | null;
   listeners: Set<(state: SessionState | null) => void>;
   ownerLeaveTimer: number | null;
@@ -143,8 +142,9 @@ function requireSupabase() {
 function rowToState(row: SessionRow, presence: Record<string, Partner>, frameCache: SessionRuntime["frameCache"]): SessionState {
   const shots: Shot[] = row.shots.map((s) => ({
     index: s.index,
+    ownerId: s.ownerId,
     lockedAt: s.lockedAt,
-    frames: { ...(frameCache[s.index] ?? {}) },
+    photo: frameCache[s.index] ?? null,
   }));
 
   return {
@@ -209,7 +209,17 @@ function ensureRuntime(code: string): SessionRuntime {
         if (payload.eventType === "DELETE") {
           rt2.row = null;
         } else {
-          rt2.row = payload.new as SessionRow;
+          const newRow = payload.new as SessionRow;
+          const oldShots = rt2.row?.shots;
+          if (oldShots) {
+            // A slot's lockedAt flipping from set -> null means a retake just
+            // fired for it — the cached photo is stale, must be recaptured.
+            for (const shot of newRow.shots) {
+              const wasLocked = oldShots.find((s) => s.index === shot.index)?.lockedAt;
+              if (wasLocked && !shot.lockedAt) delete rt2.frameCache[shot.index];
+            }
+          }
+          rt2.row = newRow;
         }
         emit(code);
         void syncMissingFrames(code);
@@ -312,8 +322,10 @@ export class SupabaseSessionStore implements SessionStore {
     if (resumeId) return { partnerId: resumeId };
 
     const partnerId = genId();
-    // Clear idle-lobby expiry now that a second partner is joining.
-    await sb.from("sessions").update({ expires_at: null }).eq("code", code);
+    // Clear idle-lobby expiry now that a second partner is joining, and
+    // persist who the joiner is — confirm_format needs this to assign slot
+    // ownership, and presence labels alone aren't durable enough for that.
+    await sb.from("sessions").update({ expires_at: null, joiner_id: partnerId }).eq("code", code).is("joiner_id", null);
     rememberPartnerId(code, partnerId);
     return { partnerId };
   }
@@ -407,22 +419,22 @@ export class SupabaseSessionStore implements SessionStore {
   async submitFrame(code: string, partnerId: string, shotIndex: number, dataUrl: string) {
     const rt = runtimes.get(code);
     if (rt) {
-      rt.frameCache[shotIndex] = { ...(rt.frameCache[shotIndex] ?? {}), [partnerId]: dataUrl };
+      rt.frameCache[shotIndex] = dataUrl;
       emit(code); // optimistic — show "you: captured" immediately, don't wait on the network
       if (rt.dataChannel && rt.dataChannel.readyState === "open") {
-        rt.dataChannel.send(JSON.stringify({ shotIndex, partnerId, dataUrl })); // fast path when P2P happens to be up
+        rt.dataChannel.send(JSON.stringify({ shotIndex, dataUrl })); // fast path when P2P happens to be up
       }
     }
 
     const sb = requireSupabase();
     // Reliable path: two real devices on two real networks can't be counted on
     // to hold a direct P2P link, so Storage is the actual source of truth —
-    // this is what lets the *other* partner's device pick up this frame.
+    // this is what lets the *other* partner's device pick up this slot's photo.
     const blob = await dataUrlToBlob(dataUrl);
     const { error: uploadError } = await sb.storage
       .from("frames")
-      .upload(framePath(code, shotIndex, partnerId), blob, { contentType: "image/jpeg", upsert: true });
-    if (uploadError) throw uploadError; // let the caller's retry UI handle it — don't mark the shot submitted if the photo never made it up
+      .upload(framePath(code, shotIndex), blob, { contentType: "image/jpeg", upsert: true });
+    if (uploadError) throw uploadError; // let the caller's retry UI handle it — don't mark the slot submitted if the photo never made it up
 
     await sb.rpc("submit_frame", { p_code: code, p_partner_id: partnerId, p_shot_index: shotIndex });
   }
@@ -433,12 +445,6 @@ export class SupabaseSessionStore implements SessionStore {
 
   async voteToAdvance(code: string, partnerId: string) {
     await requireSupabase().rpc("vote_to_advance", { p_code: code, p_partner_id: partnerId });
-  }
-
-  async confirmRetake(code: string, partnerId: string, shotIndex: number) {
-    const rt = runtimes.get(code);
-    if (rt) delete rt.frameCache[shotIndex]; // clear stale frames for the shot being redone
-    await requireSupabase().rpc("confirm_retake", { p_code: code, p_partner_id: partnerId, p_shot_index: shotIndex });
   }
 
   async setFilter(code: string, _partnerId: string, filterId: string) {
@@ -458,18 +464,18 @@ export class SupabaseSessionStore implements SessionStore {
     if (!channel) return;
     channel.onmessage = (ev) => {
       try {
-        const { shotIndex, partnerId, dataUrl } = JSON.parse(ev.data);
-        this.receiveRemoteFrame(code, shotIndex, partnerId, dataUrl);
+        const { shotIndex, dataUrl } = JSON.parse(ev.data);
+        this.receiveRemoteFrame(code, shotIndex, dataUrl);
       } catch (err) {
         console.error("bad frame payload over data channel", err);
       }
     };
   }
 
-  receiveRemoteFrame(code: string, shotIndex: number, partnerId: string, dataUrl: string) {
+  receiveRemoteFrame(code: string, shotIndex: number, dataUrl: string) {
     const rt = runtimes.get(code);
     if (!rt) return;
-    rt.frameCache[shotIndex] = { ...(rt.frameCache[shotIndex] ?? {}), [partnerId]: dataUrl };
+    rt.frameCache[shotIndex] = dataUrl;
     emit(code);
   }
 

@@ -103,7 +103,7 @@ export default function SessionPage({
         <CaptureScreen code={code} state={state} self={self} partner={partner} isOwner={isOwner} />
       )}
       {state.step === "retake" && (
-        <RetakeVoteScreen code={code} state={state} self={self} isOwner={isOwner} />
+        <RetakeVoteScreen code={code} state={state} self={self} />
       )}
       {state.step === "filter" && <FilterScreen code={code} state={state} self={self} />}
       {state.step === "shared" && <SharedViewScreen state={state} />}

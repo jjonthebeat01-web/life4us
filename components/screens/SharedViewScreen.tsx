@@ -37,7 +37,6 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
     ctx.fillStyle = template.swatch;
     ctx.fillRect(GUTTER, y, CELL_W, CELL_H);
 
-    const frames = Object.values(shot.frames);
     ctx.save();
     ctx.beginPath();
     ctx.rect(GUTTER, y, CELL_W, CELL_H);
@@ -45,13 +44,8 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).filter = filter.css;
 
-    if (frames.length >= 2) {
-      const [imgA, imgB] = await Promise.all([loadImage(frames[0]), loadImage(frames[1])]);
-      const half = CELL_W / 2;
-      drawCover(ctx, imgA, GUTTER, y, half, CELL_H);
-      drawCover(ctx, imgB, GUTTER + half, y, half, CELL_H);
-    } else if (frames.length === 1) {
-      const img = await loadImage(frames[0]);
+    if (shot.photo) {
+      const img = await loadImage(shot.photo);
       drawCover(ctx, img, GUTTER, y, CELL_W, CELL_H);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

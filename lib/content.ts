@@ -8,10 +8,9 @@ export interface Template {
 }
 
 export const TEMPLATES: Template[] = [
-  { id: "cream", name: "cream", swatch: "#EDE7DD", stripBase: "#A8A29B" },
-  { id: "coral", name: "coral", swatch: "#F0987C", stripBase: "#B5461F" },
-  { id: "blue", name: "blue", swatch: "#B9D6F2", stripBase: "#2C6CB0" },
-  { id: "sage", name: "sage", swatch: "#C4D2BC", stripBase: "#7C9473" },
+  { id: "pink", name: "pink", swatch: "#F6D9E4", stripBase: "#E8547A" },
+  { id: "cream", name: "cream", swatch: "#F2ECE2", stripBase: "#A8977E" },
+  { id: "noir", name: "noir", swatch: "#141210", stripBase: "#000000" },
 ];
 
 export interface FormatOption {
