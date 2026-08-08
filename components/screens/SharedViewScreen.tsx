@@ -6,7 +6,11 @@ import { filterById, formatById, templateById } from "../../lib/content";
 import type { SessionState } from "../../lib/types";
 
 const STRIP_W = 480; // total strip width stays constant across formats, like a real photobooth strip
-const CELL_H = 320;
+// 320 produced a 4-row strip at ~1:2.77 (500x1386px) — taller than even the
+// tallest common phone screens (~1:2.17), so "fit to screen" in a gallery app
+// couldn't show the whole thing without scrolling. 260 brings a 4-row strip to
+// ~1:2.29 (500x1146px), which fits comfortably on virtually all modern phones.
+const CELL_H = 260;
 const GUTTER = 10;
 const FOOTER_H = 56; // was reserved as `+ 28` but nothing was ever drawn into it
 
