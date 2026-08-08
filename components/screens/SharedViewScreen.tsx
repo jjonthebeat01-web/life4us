@@ -5,6 +5,15 @@ import { Button } from "../ui/Button";
 import { filterById, formatById, templateById } from "../../lib/content";
 import type { SessionState } from "../../lib/types";
 
+// Everything below is defined at "logical" size, then multiplied by SCALE when
+// actually drawn — keeps proportions/layout math readable while the real
+// output is high-resolution. Previously the whole strip (borders, footer
+// text, everything) was composited at ~500px wide total, which is why
+// *everything* looked soft, not just the camera photos — there simply wasn't
+// enough pixel data in the canvas itself, regardless of source photo quality.
+const SCALE = 3;
+const QUALITY = 0.96; // was 0.92 — less compression softness
+
 const STRIP_W = 480; // total strip width stays constant across formats, like a real photobooth strip
 // 320 produced a 4-row strip at ~1:2.77 (500x1386px) — taller than even the
 // tallest common phone screens (~1:2.17), so "fit to screen" in a gallery app
@@ -34,13 +43,18 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
   const filter = filterById(state.filterId);
   const format = formatById(state.formatConfirmed);
   const { cols, rows } = format;
-  const cellW = (STRIP_W - GUTTER * (cols - 1)) / cols;
+  const cellW = ((STRIP_W - GUTTER * (cols - 1)) / cols) * SCALE;
+  const cellH = CELL_H * SCALE;
+  const gutter = GUTTER * SCALE;
+  const footerH = FOOTER_H * SCALE;
 
   const canvas = document.createElement("canvas");
-  canvas.width = STRIP_W + GUTTER * 2;
-  canvas.height = rows * CELL_H + (rows + 1) * GUTTER + FOOTER_H;
+  canvas.width = (STRIP_W + GUTTER * 2) * SCALE;
+  canvas.height = rows * cellH + (rows + 1) * gutter + footerH;
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   ctx.fillStyle = template.stripBase;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -52,22 +66,22 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
     // instead of two side by side.
     const col = i % cols;
     const row = Math.floor(i / cols);
-    const x = GUTTER + col * (cellW + GUTTER);
-    const y = GUTTER + row * (CELL_H + GUTTER);
+    const x = gutter + col * (cellW + gutter);
+    const y = gutter + row * (cellH + gutter);
 
     ctx.fillStyle = template.swatch;
-    ctx.fillRect(x, y, cellW, CELL_H);
+    ctx.fillRect(x, y, cellW, cellH);
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x, y, cellW, CELL_H);
+    ctx.rect(x, y, cellW, cellH);
     ctx.clip();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).filter = filter.css;
 
     if (shot.photo) {
       const img = await loadImage(shot.photo);
-      drawCover(ctx, img, x, y, cellW, CELL_H);
+      drawCover(ctx, img, x, y, cellW, cellH);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).filter = "none";
@@ -85,17 +99,17 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
       // draw anyway with whatever's loaded rather than block the strip
     }
   }
-  const footerY = canvas.height - FOOTER_H;
+  const footerY = canvas.height - footerH;
   const centerX = canvas.width / 2;
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#FFFFFF";
-  ctx.font = 'italic 600 26px "Fraunces", Georgia, serif';
-  ctx.fillText("life4us", centerX, footerY + 30);
+  ctx.font = `italic 600 ${26 * SCALE}px "Fraunces", Georgia, serif`;
+  ctx.fillText("life4us", centerX, footerY + 30 * SCALE);
 
-  ctx.font = '11px "IBM Plex Mono", "Space Mono", monospace';
+  ctx.font = `${11 * SCALE}px "IBM Plex Mono", "Space Mono", monospace`;
   ctx.globalAlpha = 0.75;
-  ctx.fillText(`${formatStripDate(state.createdAt)}  ·  ${state.code}`, centerX, footerY + 46);
+  ctx.fillText(`${formatStripDate(state.createdAt)}  ·  ${state.code}`, centerX, footerY + 46 * SCALE);
   ctx.globalAlpha = 1;
 
   return canvas;
@@ -126,7 +140,7 @@ export function SharedViewScreen({ state }: { state: SessionState }) {
     renderStrip(state).then((canvas) => {
       if (!active) return;
       canvasCacheRef.current = canvas;
-      setDataUrl(canvas.toDataURL("image/jpeg", 0.92));
+      setDataUrl(canvas.toDataURL("image/jpeg", QUALITY));
     });
     return () => {
       active = false;
@@ -160,7 +174,7 @@ export function SharedViewScreen({ state }: { state: SessionState }) {
         // fall through to download
       }
       download();
-    }, "image/jpeg", 0.92);
+    }, "image/jpeg", QUALITY);
   }
 
   return (

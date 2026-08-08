@@ -12,7 +12,10 @@ export function useLocalCamera() {
 
     navigator.mediaDevices
       ?.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 1280 }, facingMode: "user" },
+        // Bumped from 1280 now that the strip renders at 3x scale — source
+        // photos need enough native detail to not become the new bottleneck
+        // once cells are drawn that much larger.
+        video: { width: { ideal: 1920 }, height: { ideal: 1920 }, facingMode: "user" },
         audio: false,
       })
       .then((mediaStream) => {
