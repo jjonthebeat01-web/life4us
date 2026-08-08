@@ -45,6 +45,10 @@ export function templateById(id: string | null) {
   return TEMPLATES.find((t) => t.id === id) ?? TEMPLATES[0];
 }
 
+export function formatById(id: string | null) {
+  return FORMATS.find((f) => f.id === id) ?? FORMATS[0];
+}
+
 export function filterById(id: string) {
   return FILTERS.find((f) => f.id === id) ?? FILTERS[0];
 }

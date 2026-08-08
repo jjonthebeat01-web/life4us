@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { filterById, templateById } from "../../lib/content";
+import { filterById, formatById, templateById } from "../../lib/content";
 import type { SessionState } from "../../lib/types";
 
-const CELL_W = 480;
+const STRIP_W = 480; // total strip width stays constant across formats, like a real photobooth strip
 const CELL_H = 320;
 const GUTTER = 10;
 const FOOTER_H = 56; // was reserved as `+ 28` but nothing was ever drawn into it
@@ -28,32 +28,42 @@ function formatStripDate(ts: number): string {
 async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
   const template = templateById(state.templateConfirmed);
   const filter = filterById(state.filterId);
+  const format = formatById(state.formatConfirmed);
+  const { cols, rows } = format;
+  const cellW = (STRIP_W - GUTTER * (cols - 1)) / cols;
+
   const canvas = document.createElement("canvas");
-  const n = state.shots.length;
-  canvas.width = CELL_W + GUTTER * 2;
-  canvas.height = n * CELL_H + (n + 1) * GUTTER + FOOTER_H;
+  canvas.width = STRIP_W + GUTTER * 2;
+  canvas.height = rows * CELL_H + (rows + 1) * GUTTER + FOOTER_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
   ctx.fillStyle = template.stripBase;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < state.shots.length; i++) {
     const shot = state.shots[i];
-    const y = GUTTER + i * (CELL_H + GUTTER);
+    // Grid position from format's cols/rows — was previously ignored
+    // entirely, which is why 2x4 rendered as a single stacked column
+    // instead of two side by side.
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = GUTTER + col * (cellW + GUTTER);
+    const y = GUTTER + row * (CELL_H + GUTTER);
+
     ctx.fillStyle = template.swatch;
-    ctx.fillRect(GUTTER, y, CELL_W, CELL_H);
+    ctx.fillRect(x, y, cellW, CELL_H);
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(GUTTER, y, CELL_W, CELL_H);
+    ctx.rect(x, y, cellW, CELL_H);
     ctx.clip();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).filter = filter.css;
 
     if (shot.photo) {
       const img = await loadImage(shot.photo);
-      drawCover(ctx, img, GUTTER, y, CELL_W, CELL_H);
+      drawCover(ctx, img, x, y, cellW, CELL_H);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).filter = "none";
