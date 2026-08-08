@@ -8,6 +8,7 @@ import type { SessionState } from "../../lib/types";
 const CELL_W = 480;
 const CELL_H = 320;
 const GUTTER = 10;
+const FOOTER_H = 56; // was reserved as `+ 28` but nothing was ever drawn into it
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -18,13 +19,19 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+function formatStripDate(ts: number): string {
+  return new Date(ts)
+    .toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" })
+    .replace(/\//g, ".");
+}
+
 async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
   const template = templateById(state.templateConfirmed);
   const filter = filterById(state.filterId);
   const canvas = document.createElement("canvas");
   const n = state.shots.length;
   canvas.width = CELL_W + GUTTER * 2;
-  canvas.height = n * CELL_H + (n + 1) * GUTTER + 28;
+  canvas.height = n * CELL_H + (n + 1) * GUTTER + FOOTER_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
@@ -52,6 +59,30 @@ async function renderStrip(state: SessionState): Promise<HTMLCanvasElement> {
     (ctx as any).filter = "none";
     ctx.restore();
   }
+
+  // Footer — our wordmark in the theme-colored bottom tab, same role a real
+  // photobooth strip's brand mark plays, plus a small date/code line as our
+  // equivalent of a serial number. Wait for the display font to actually be
+  // loaded so this doesn't silently fall back to a generic serif.
+  if (typeof document !== "undefined" && "fonts" in document) {
+    try {
+      await document.fonts.ready;
+    } catch {
+      // draw anyway with whatever's loaded rather than block the strip
+    }
+  }
+  const footerY = canvas.height - FOOTER_H;
+  const centerX = canvas.width / 2;
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = 'italic 600 26px "Fraunces", Georgia, serif';
+  ctx.fillText("life4us", centerX, footerY + 30);
+
+  ctx.font = '11px "IBM Plex Mono", "Space Mono", monospace';
+  ctx.globalAlpha = 0.75;
+  ctx.fillText(`${formatStripDate(state.createdAt)}  ·  ${state.code}`, centerX, footerY + 46);
+  ctx.globalAlpha = 1;
 
   return canvas;
 }
