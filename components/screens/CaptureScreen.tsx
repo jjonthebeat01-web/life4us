@@ -73,6 +73,30 @@ export function CaptureScreen({
   const roundComplete = mySubmitted && partnerSubmitted;
   const totalRounds = state.shots.length / 2;
 
+  // Only the first round needs a manual press. Once a round completes and
+  // advances, auto-fire the next countdown instead of waiting on another tap.
+  // Gated to the owner so only one side ever triggers it (both triggering
+  // independently would risk two near-simultaneous countdown_seed writes and
+  // a janky double-flash). Skips the very first mount deliberately — that one
+  // still needs the initial "Start countdown" press.
+  const prevRoundRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prevRound = prevRoundRef.current;
+    prevRoundRef.current = round;
+    if (prevRound === null || prevRound === round) return; // first mount, or no actual advance
+    if (!isOwner) return;
+    if (round >= totalRounds) return; // all rounds already captured
+
+    let cancelled = false;
+    (async () => {
+      await sleep(1200); // let "round captured" stay visible for a beat before the next countdown
+      if (!cancelled) store.startCountdown(code, self.id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [round, isOwner, totalRounds, code, self.id]);
+
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [stuck, setStuck] = useState(false);
   const mySlotRef = useRef(mySlot);
