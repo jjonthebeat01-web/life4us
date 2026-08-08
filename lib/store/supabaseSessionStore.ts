@@ -422,7 +422,16 @@ export class SupabaseSessionStore implements SessionStore {
       rt.frameCache[shotIndex] = dataUrl;
       emit(code); // optimistic — show "you: captured" immediately, don't wait on the network
       if (rt.dataChannel && rt.dataChannel.readyState === "open") {
-        rt.dataChannel.send(JSON.stringify({ shotIndex, dataUrl })); // fast path when P2P happens to be up
+        // Best-effort only. RTCDataChannel.send() has a real message-size limit
+        // (commonly ~256KB) that a phone-camera photo can exceed — if it throws
+        // here uncaught, it kills the whole submitFrame() call before Storage
+        // (the actual source of truth, below) ever gets a chance to run. That's
+        // the bug behind "capture works on desktop, fails every time on phone."
+        try {
+          rt.dataChannel.send(JSON.stringify({ shotIndex, dataUrl }));
+        } catch (err) {
+          console.warn("data channel send failed (message likely too large) — falling back to Storage only", err);
+        }
       }
     }
 

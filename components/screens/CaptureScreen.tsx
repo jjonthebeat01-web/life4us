@@ -116,8 +116,11 @@ export function CaptureScreen({
     } catch (err) {
       // Don't fail silently: surface it and let the user retry manually so the
       // session never freezes waiting on a submission that's never coming.
+      // Showing the real message (not a generic placeholder) matters — it's
+      // the difference between "camera not ready" and "upload failed" next time.
       console.error("capture failed", err);
-      setCaptureError("Couldn't capture — tap retry.");
+      const msg = err instanceof Error ? err.message : "unknown error";
+      setCaptureError(`Couldn't capture (${msg}) — tap retry.`);
       setStuck(true);
     }
   }
