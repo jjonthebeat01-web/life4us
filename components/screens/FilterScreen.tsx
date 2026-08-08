@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "../ui/Button";
-import { FILTERS, filterById, templateById } from "../../lib/content";
+import { FILTERS, filterById, formatById, templateById } from "../../lib/content";
 import type { Partner, SessionState } from "../../lib/types";
 import { store } from "../../lib/store/useSession";
 
@@ -16,6 +16,7 @@ export function FilterScreen({
 }) {
   const filter = filterById(state.filterId);
   const template = templateById(state.templateConfirmed);
+  const format = formatById(state.formatConfirmed);
 
   return (
     <div className="flex flex-col items-center text-center gap-1 w-full">
@@ -23,8 +24,15 @@ export function FilterScreen({
       <p className="text-mist text-sm mb-6">Either of you can change it — updates for both</p>
 
       <div
-        className="rounded-lg overflow-hidden p-1.5 flex flex-col gap-1 mb-6"
-        style={{ backgroundColor: template.stripBase, width: 160 }}
+        className="rounded-lg overflow-hidden p-1.5 grid gap-1 mb-6"
+        style={{
+          backgroundColor: template.stripBase,
+          width: 160,
+          // Same grid this preview always should have used — was a fixed
+          // single-column flex stack before, so 2x2/2x4 previewed wrong
+          // here even after the real strip renderer got fixed.
+          gridTemplateColumns: `repeat(${format.cols}, 1fr)`,
+        }}
       >
         {state.shots.map((shot) => (
           <div
