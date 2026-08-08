@@ -25,7 +25,7 @@ export function RetakeVoteScreen({
 
   return (
     <div className="flex flex-col items-center text-center gap-1 w-full">
-      <h1 className="font-display text-2xl text-paper mb-1">Tap any photo to vote retake</h1>
+      <h1 className="font-display text-2xl text-flash-pink mb-1">Tap any photo to vote retake</h1>
       <p className="text-mist text-sm mb-6">Both must vote to unlock a retake</p>
 
       <div className="grid grid-cols-2 gap-2.5 w-full mb-6">
@@ -69,7 +69,7 @@ export function RetakeVoteScreen({
       </div>
 
       <div className="w-full">
-        <div className="w-full rounded-xl px-4 py-3 mb-3 text-sm font-utility bg-paper/10 text-paper">
+        <div className="w-full rounded-xl px-4 py-3 mb-3 text-sm font-utility bg-paper/10 text-mist">
           {advanceVotes >= partnerCount
             ? "Both of you are ready to move on"
             : `${advanceVotes}/${partnerCount} partners are ready to continue`}
@@ -77,7 +77,7 @@ export function RetakeVoteScreen({
         <button
           onClick={() => store.voteToAdvance(code, self.id)}
           disabled={hasVotedToAdvance}
-          className={`w-full rounded-xl px-4 py-3 text-sm font-utility transition-colors ${
+          className={`w-full rounded-xl px-4 py-3 text-sm text-flash-pink font-utility transition-colors ${
             hasVotedToAdvance
               ? "bg-white/10 text-mist cursor-not-allowed"
               : "bg-paper text-black hover:bg-paper/90"
